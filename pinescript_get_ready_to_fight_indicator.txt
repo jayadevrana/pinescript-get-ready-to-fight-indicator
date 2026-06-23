@@ -1,0 +1,158 @@
+//@version=5
+indicator(title="Get Ready To Fight", shorttitle = "Mr.X", overlay=true)
+show_vwap = input.bool(true)
+var cVol = 0.
+cVol += nz(volume)
+
+hideonDWM = false
+VwapStyleHolder = plot.style_line 
+
+TextColor = color.gray
+
+var VWAP_type = input.string(defval = "W", options=["None","D", "W", "M", "3M", "6M", "12M"])
+Sizeholder= size.small
+offsetV1 = 15
+
+vwap_cond = VWAP_type != "None" and show_vwap
+var label la_vwap = (vwap_cond) ? label.new(bar_index,high,style = label.style_none,text = VWAP_type + " VWAP", textcolor = TextColor, size = Sizeholder) :na
+
+if barstate.islast and cVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+setLabelPrice(_label, _price,_offset) =>
+    label.set_y(_label,_price)
+    label.set_x(_label,bar_index + _offset)
+    
+calc_vwap(src, isNewPeriod) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+	_vwap = sumSrcVol / sumVol
+	[_vwap,sumVol]
+	
+timeChange(period) =>
+	ta.change(time(period))
+
+is_newbar(res) =>
+    t = time(res)
+    not na(t) and (na(t[1]) or t > t[1])
+
+getDay()=>
+    (dayofweek == dayofweek.monday) ? "Saturday" : (dayofweek == dayofweek.tuesday) ? "Sunday" : (dayofweek == dayofweek.wednesday) ? "Monday" : (dayofweek == dayofweek.thursday) ? "Tuesday" : (dayofweek == dayofweek.friday) ? "Wednesday" : (dayofweek == dayofweek.saturday) ? "Thursday" : (dayofweek == dayofweek.sunday) ? "Friday" : na
+
+getWeek()=>
+    weekofyear[1]
+
+getMonth()=>
+
+    realmonth = month - 2
+    if realmonth < 1
+        realmonth := 12
+    (realmonth == 1) ? "January" :(realmonth == 2) ? "February" :(realmonth == 3) ? "March" :(realmonth == 4) ? "April" :(realmonth == 5) ? "May" :(realmonth == 6) ? "June" :(realmonth == 7) ? "July" :(realmonth == 8) ? "August" :(realmonth == 9) ? "September" :(realmonth == 10) ? "October" :(realmonth == 11) ? "November" :(realmonth == 12) ? "December" : na
+getYear()=>
+    year - 2
+trackClosesText(anchor)=>
+    if anchor == "D"
+        getDay()
+       
+    else if anchor == "W"
+        str.tostring(getWeek()) + " " + " /52"
+        
+    else if anchor == "M" or anchor == "3M" or anchor == "6M"
+        str.tostring(getMonth())
+    else 
+        str.tostring(getYear())
+        
+periodS1= false
+var float vwap_value = na
+
+if VWAP_type != "None"
+    periodS1 := is_newbar(VWAP_type)
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap,sumVol] = calc_vwap(hlc3, periodS1)
+    vwap_value := _vwap
+    if show_vwap
+        setLabelPrice(la_vwap,vwap_value,offsetV1)
+
+//plot(show_vwap?vwap_value:na, title="VWAP", color=color.gray, offset=0, style = VwapStyleHolder)
+
+
+length = 8
+factor = 0.7
+src = close
+
+gd(src, length) =>
+    ta.ema(src, length) * (1 + factor) - ta.ema(ta.ema(src, length), length) * factor
+
+t3 = gd(gd(gd(src, length), length), length)
+
+t3Color = t3 > t3[1] ? color.green : color.red
+
+//
+
+BuyCondition = close > t3 and close[1] < t3[1]
+SellCondition = close < t3 and close[1] > t3[1]
+
+
+last_signal = 0
+Buy_final = BuyCondition and (nz(last_signal[1]) == 0 or nz(last_signal[1]) == -1)
+Sell_final = SellCondition and (nz(last_signal[1]) == 0 or nz(last_signal[1]) == 1)
+last_signal := Buy_final ? 1 : Sell_final ? -1 : last_signal[1]
+
+BuyHigh = ta.valuewhen(Buy_final, high, 0)
+ShortLow = ta.valuewhen(Sell_final, low, 0)
+
+eBuy = last_signal > 0 and close > BuyHigh
+eShort = last_signal < 0 and close < ShortLow
+
+LastSignal = 0
+Buy = eBuy and (nz(LastSignal[1]) == 0 or nz(LastSignal[1]) == -1)
+Short = eShort and (nz(LastSignal[1]) == 0 or nz(LastSignal[1]) == 1)
+LastSignal := Buy ? 1 : Short ? -1 : LastSignal[1]
+
+plotshape(close<vwap_value and Short, style=shape.xcross, location=location.abovebar, color=color.new(#BF0000, 0),size=size.small)
+
+if close<vwap_value and Short
+    alert("Sell Alert",alert.freq_once_per_bar_close)
+//
+buyprice = ta.valuewhen(Buy, high, 0)
+sellprice = ta.valuewhen(Short, low, 0)
+
+bfirm = ta.crossover(close, buyprice)
+sfirm = ta.crossunder(close, sellprice)
+
+Exrem_Buy_Sell(BUY, SELL) =>
+    buycond = BUY and not BUY[1]
+    sellcond = SELL and not SELL[1]
+
+    bullish = ta.barssince(buycond) < ta.barssince(sellcond)
+    bearish = ta.barssince(sellcond) < ta.barssince(buycond)
+
+    buym = bearish[1] and buycond
+    sellm = bullish[1] and sellcond
+
+    [buym, sellm]
+
+[cbuy, ccb] = Exrem_Buy_Sell(bfirm, Buy)
+[csell, ccs] = Exrem_Buy_Sell(sfirm, Short)
+
+last_signal := Buy_final ? 1 : Sell_final ? -1 : last_signal[1]
+
+plotshape(close>vwap_value and Buy, style=shape.xcross, location=location.belowbar, color=color.new(#0814BF, 0),size=size.small)
+
+if close>vwap_value and Buy
+    alert("Buy Alert",alert.freq_once_per_bar_close)
+bgcolor(VWAP_type != "None" and close>vwap_value?color.new(color.lime, 70):VWAP_type != "None"?color.new(color.red, 70):na)
+
+if Buy 
+    alert('Get Ready to Fight Alert \n\n'+syminfo.ticker+'\n \nBUY SIGNAL\n \nAt price  '+ str.tostring(close)+'\n\nTime frame :=  '+timeframe.period+'',alert.freq_once_per_bar_close)
+
+if Short
+    alert('Get Ready to Fight Alert \n\n'+syminfo.ticker+'\n \nSELL SIGNAL\n \nAt price  '+ str.tostring(close)+'\n\nTime frame :=  '+timeframe.period+'',alert.freq_once_per_bar_close)
+
+
+
+
+
